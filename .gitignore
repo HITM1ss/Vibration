@@ -1,0 +1,34 @@
+# Build output
+build/
+
+# STM32CubeMX
+.mxproject
+EWARM/
+MDK-ARM/
+Makefile.conf
+
+# IDE
+.vscode/
+.idea/
+*.project
+*.cproject
+.settings/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Reference (contains docs/extras, optional)
+参考/
+
+# Source files are tracked - do not ignore
+!Core/
+!Drivers/
+!user/
+!startup_stm32f103xb.s
+!stm32f103c8t6_opencd.cfg
+!STM32F103.svd
+!STM32F103XX_FLASH.ld
+!OLED_Timer.ioc
+!Makefile
+!.gitignore
