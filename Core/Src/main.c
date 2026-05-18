@@ -23,6 +23,8 @@
 /* USER CODE BEGIN Includes */
 #include "u8g2_hal.h"
 #include "u8g2.h"
+#include <stdio.h>
+#include <string.h>
 
 u8g2_t u8g2;
 /* USER CODE END Includes */
@@ -46,6 +48,8 @@ u8g2_t u8g2;
 SPI_HandleTypeDef hspi1;
 DMA_HandleTypeDef hdma_spi1_tx;
 
+TIM_HandleTypeDef htim4;
+
 /* USER CODE BEGIN PV */
 
 /* USER CODE END PV */
@@ -55,6 +59,7 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_SPI1_Init(void);
+static void MX_TIM4_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -95,15 +100,23 @@ int main(void)
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_SPI1_Init();
+  MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
   u8g2_Setup_ssd1327_ws_128x128_f(&u8g2, U8G2_R0, u8x8_byte_hw_spi, u8x8_gpio_and_delay_stm32f1);
   u8g2_InitDisplay(&u8g2);
   u8g2_SetPowerSave(&u8g2, 0);
-  
-  u8g2_ClearBuffer(&u8g2);
-  u8g2_SetFont(&u8g2, u8g2_font_ncenB14_tr);
-  u8g2_DrawStr(&u8g2, 20, 64, "helloworld");
-  u8g2_SendBuffer(&u8g2);
+
+  HAL_TIM_Encoder_Start(&htim4, TIM_CHANNEL_ALL);
+
+  int16_t last_count = 0;
+  int counter = 0;
+  char str_buf[16];
+  uint8_t button_pressed = 0;
+  uint32_t fps_frame_count = 0;
+  uint32_t fps_last_tick = 0;
+  uint8_t fps = 0;
+  int16_t scroll_x = 128;
+  uint32_t scroll_last_tick = 0;
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -113,6 +126,70 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    static uint32_t last_tick = 0;
+    if (HAL_GetTick() - last_tick >= 1000) {
+      last_tick = HAL_GetTick();
+      HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
+    }
+
+    fps_frame_count++;
+    if (HAL_GetTick() - fps_last_tick >= 1000) {
+      fps = fps_frame_count;
+      fps_frame_count = 0;
+      fps_last_tick = HAL_GetTick();
+    }
+
+    int16_t current_count = (int16_t)__HAL_TIM_GET_COUNTER(&htim4);
+    if (current_count != last_count) {
+      counter += (current_count - last_count);
+      last_count = current_count;
+    }
+
+    if (HAL_GetTick() - scroll_last_tick >= 50) {
+      scroll_last_tick = HAL_GetTick();
+      scroll_x--;
+      if (scroll_x < -80) {
+        scroll_x = 128;
+      }
+
+      u8g2_ClearBuffer(&u8g2);
+      
+      u8g2_SetFont(&u8g2, u8g2_font_6x10_tr);
+      u8g2_DrawStr(&u8g2, scroll_x, 10, "HIT409LAB");
+      
+      u8g2_SetFont(&u8g2, u8g2_font_ncenB14_tr);
+      u8g2_DrawStr(&u8g2, 30, 60, "Counter:");
+
+      int temp = counter;
+      if (temp < 0) {
+        temp = -temp;
+        sprintf(str_buf, "-%d", temp);
+      } else {
+        sprintf(str_buf, "%d", counter);
+      }
+      u8g2_DrawStr(&u8g2, 30, 90, str_buf);
+      
+      u8g2_SetFont(&u8g2, u8g2_font_4x6_tr);
+      sprintf(str_buf, "%d", fps);
+      u8g2_DrawStr(&u8g2, 0, 127, str_buf);
+      
+      u8g2_SendBuffer(&u8g2);
+    }
+
+    if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_1) == GPIO_PIN_RESET) {
+      HAL_Delay(50);
+      if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_1) == GPIO_PIN_RESET) {
+        if (!button_pressed) {
+          button_pressed = 1;
+          HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
+          counter = 0;
+          __HAL_TIM_SET_COUNTER(&htim4, 0);
+          last_count = 0;
+        }
+      }
+    } else {
+      button_pressed = 0;
+    }
   }
   /* USER CODE END 3 */
 }
@@ -129,12 +206,13 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+  RCC_OscInitStruct.HSEPredivValue = RCC_HSE_PREDIV_DIV1;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
-  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI_DIV2;
-  RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL16;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+  RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL9;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
@@ -178,7 +256,7 @@ static void MX_SPI1_Init(void)
   hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi1.Init.NSS = SPI_NSS_SOFT;
-  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_8;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_4;
   hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -190,6 +268,55 @@ static void MX_SPI1_Init(void)
   /* USER CODE BEGIN SPI1_Init 2 */
 
   /* USER CODE END SPI1_Init 2 */
+
+}
+
+/**
+  * @brief TIM4 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM4_Init(void)
+{
+
+  /* USER CODE BEGIN TIM4_Init 0 */
+
+  /* USER CODE END TIM4_Init 0 */
+
+  TIM_Encoder_InitTypeDef sConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM4_Init 1 */
+
+  /* USER CODE END TIM4_Init 1 */
+  htim4.Instance = TIM4;
+  htim4.Init.Prescaler = 0;
+  htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim4.Init.Period = 65535;
+  htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  sConfig.EncoderMode = TIM_ENCODERMODE_TI12;
+  sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC1Filter = 0;
+  sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC2Filter = 0;
+  if (HAL_TIM_Encoder_Init(&htim4, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim4, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM4_Init 2 */
+
+  /* USER CODE END TIM4_Init 2 */
 
 }
 
@@ -223,6 +350,7 @@ static void MX_GPIO_Init(void)
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOC_CLK_ENABLE();
+  __HAL_RCC_GPIOD_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
@@ -242,6 +370,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : KEY_Pin */
+  GPIO_InitStruct.Pin = KEY_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(KEY_GPIO_Port, &GPIO_InitStruct);
+
   /*Configure GPIO pins : OLED_CS__Pin OLED_DC__Pin */
   GPIO_InitStruct.Pin = OLED_CS__Pin|OLED_DC__Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
@@ -256,8 +390,26 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(OLED_RST_GPIO_Port, &GPIO_InitStruct);
 
-  /* USER CODE BEGIN MX_GPIO_Init_2 */
+  /*Configure GPIO pin : EC11_C_Pin */
+  GPIO_InitStruct.Pin = EC11_C_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(EC11_C_GPIO_Port, &GPIO_InitStruct);
 
+  /* USER CODE BEGIN MX_GPIO_Init_2 */
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+
+  GPIO_InitStruct.Pin = GPIO_PIN_6 | GPIO_PIN_7;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  GPIO_InitStruct.Pin = GPIO_PIN_1;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
