@@ -50,8 +50,15 @@ DMA_HandleTypeDef hdma_spi1_tx;
 
 TIM_HandleTypeDef htim4;
 
-/* USER CODE BEGIN PV */
+UART_HandleTypeDef huart1;
 
+/* USER CODE BEGIN PV */
+uint8_t uart_rx_data;
+uint8_t uart_rx_buf[64];
+uint8_t uart_rx_len;
+uint32_t uart_disp_last_tick;
+uint32_t uart_show_tick;
+uint8_t uart_data_ready;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -60,6 +67,7 @@ static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_TIM4_Init(void);
+static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -101,6 +109,7 @@ int main(void)
   MX_DMA_Init();
   MX_SPI1_Init();
   MX_TIM4_Init();
+  MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
   u8g2_Setup_ssd1327_ws_128x128_f(&u8g2, U8G2_R0, u8x8_byte_hw_spi, u8x8_gpio_and_delay_stm32f1);
   u8g2_InitDisplay(&u8g2);
@@ -117,6 +126,13 @@ int main(void)
   uint8_t fps = 0;
   int16_t scroll_x = 128;
   uint32_t scroll_last_tick = 0;
+
+  uart_rx_len = 0;
+  memset(uart_rx_buf, 0, sizeof(uart_rx_buf));
+  uart_disp_last_tick = 0;
+  uart_show_tick = 0;
+  uart_data_ready = 0;
+  HAL_UART_Receive_IT(&huart1, &uart_rx_data, 1);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -133,7 +149,7 @@ int main(void)
     }
 
     fps_frame_count++;
-    if (HAL_GetTick() - fps_last_tick >= 1000) {
+    if (HAL_GetTick() - fps_last_tick >= 100) {
       fps = fps_frame_count;
       fps_frame_count = 0;
       fps_last_tick = HAL_GetTick();
@@ -145,6 +161,11 @@ int main(void)
       last_count = current_count;
     }
 
+    if (HAL_GetTick() - uart_show_tick >= 2000 && uart_rx_len > 0) {
+      uart_rx_len = 0;
+      memset(uart_rx_buf, 0, sizeof(uart_rx_buf));
+    }
+
     if (HAL_GetTick() - scroll_last_tick >= 50) {
       scroll_last_tick = HAL_GetTick();
       scroll_x--;
@@ -153,7 +174,7 @@ int main(void)
       }
 
       u8g2_ClearBuffer(&u8g2);
-      
+
       u8g2_SetFont(&u8g2, u8g2_font_6x10_tr);
       u8g2_DrawStr(&u8g2, scroll_x, 10, "HIT409LAB");
       
@@ -172,7 +193,11 @@ int main(void)
       u8g2_SetFont(&u8g2, u8g2_font_4x6_tr);
       sprintf(str_buf, "%d", fps);
       u8g2_DrawStr(&u8g2, 0, 127, str_buf);
-      
+
+      if (uart_rx_len > 0) {
+        u8g2_DrawStr(&u8g2, 0, 40, (char*)uart_rx_buf);
+      }
+
       u8g2_SendBuffer(&u8g2);
     }
 
@@ -185,6 +210,8 @@ int main(void)
           counter = 0;
           __HAL_TIM_SET_COUNTER(&htim4, 0);
           last_count = 0;
+          uart_rx_len = 0;
+          memset(uart_rx_buf, 0, sizeof(uart_rx_buf));
         }
       }
     } else {
@@ -321,6 +348,39 @@ static void MX_TIM4_Init(void)
 }
 
 /**
+  * @brief USART1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART1_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART1_Init 0 */
+
+  /* USER CODE END USART1_Init 0 */
+
+  /* USER CODE BEGIN USART1_Init 1 */
+
+  /* USER CODE END USART1_Init 1 */
+  huart1.Instance = USART1;
+  huart1.Init.BaudRate = 115200;
+  huart1.Init.WordLength = UART_WORDLENGTH_8B;
+  huart1.Init.StopBits = UART_STOPBITS_1;
+  huart1.Init.Parity = UART_PARITY_NONE;
+  huart1.Init.Mode = UART_MODE_TX_RX;
+  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART1_Init 2 */
+
+  /* USER CODE END USART1_Init 2 */
+
+}
+
+/**
   * Enable DMA controller clock
   */
 static void MX_DMA_Init(void)
@@ -390,12 +450,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(OLED_RST_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : EC11_C_Pin */
-  GPIO_InitStruct.Pin = EC11_C_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
-  HAL_GPIO_Init(EC11_C_GPIO_Port, &GPIO_InitStruct);
-
   /* USER CODE BEGIN MX_GPIO_Init_2 */
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
@@ -414,6 +468,20 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
+  if (huart->Instance == USART1) {
+    if (uart_rx_len < 63) {
+      uart_rx_buf[uart_rx_len++] = uart_rx_data;
+      if (uart_rx_data == '\n' || uart_rx_data == '\r') {
+        uart_rx_buf[uart_rx_len] = '\0';
+      }
+    }
+    uart_show_tick = HAL_GetTick();
+    uart_data_ready = 1;
+    HAL_UART_Receive_IT(&huart1, &uart_rx_data, 1);
+  }
+}
 
 /* USER CODE END 4 */
 

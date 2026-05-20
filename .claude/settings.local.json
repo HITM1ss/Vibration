@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(where mingw32-make *)",
+      "Bash(where make *)",
+      "Bash(openocd -f interface/stlink.cfg -f target/stm32f1x.cfg -c \"program build/OLED_Timer.elf verify reset exit\")",
+      "Bash(openocd -f interface/stlink.cfg -f target/stm32f1x.cfg -c \"program e:/Github/OLED_Timer/build/OLED_Timer.elf verify reset exit\")"
+    ]
+  }
+}

@@ -65,8 +65,6 @@ void Error_Handler(void);
 #define OLED_DC__GPIO_Port GPIOA
 #define OLED_RST_Pin GPIO_PIN_0
 #define OLED_RST_GPIO_Port GPIOB
-#define EC11_C_Pin GPIO_PIN_5
-#define EC11_C_GPIO_Port GPIOB
 #define EC11_A_Pin GPIO_PIN_6
 #define EC11_A_GPIO_Port GPIOB
 #define EC11_B_Pin GPIO_PIN_7
