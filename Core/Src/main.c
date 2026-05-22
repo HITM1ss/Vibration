@@ -48,9 +48,11 @@ u8g2_t u8g2;
 SPI_HandleTypeDef hspi1;
 DMA_HandleTypeDef hdma_spi1_tx;
 
+TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim4;
 
 UART_HandleTypeDef huart1;
+DMA_HandleTypeDef hdma_usart1_rx;
 
 /* USER CODE BEGIN PV */
 uint8_t uart_rx_data;
@@ -68,6 +70,7 @@ static void MX_DMA_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_TIM4_Init(void);
 static void MX_USART1_UART_Init(void);
+static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -110,15 +113,18 @@ int main(void)
   MX_SPI1_Init();
   MX_TIM4_Init();
   MX_USART1_UART_Init();
+  MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
   u8g2_Setup_ssd1327_ws_128x128_f(&u8g2, U8G2_R0, u8x8_byte_hw_spi, u8x8_gpio_and_delay_stm32f1);
   u8g2_InitDisplay(&u8g2);
   u8g2_SetPowerSave(&u8g2, 0);
 
   HAL_TIM_Encoder_Start(&htim4, TIM_CHANNEL_ALL);
+  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
 
   int16_t last_count = 0;
-  int counter = 0;
+  int16_t target_angle = 0;
+  uint8_t angle_selected = 0;
   char str_buf[16];
   uint8_t button_pressed = 0;
   uint32_t fps_frame_count = 0;
@@ -157,8 +163,15 @@ int main(void)
 
     int16_t current_count = (int16_t)__HAL_TIM_GET_COUNTER(&htim4);
     if (current_count != last_count) {
-      counter += (current_count - last_count);
-      last_count = current_count;
+      int16_t diff = current_count - last_count;
+      if (diff >= 4 || diff <= -4) {
+        if (angle_selected) {
+          target_angle += (diff > 0) ? 5 : -5;
+          if (target_angle < 0) target_angle = 0;
+          if (target_angle > 180) target_angle = 180;
+        }
+        last_count = current_count;
+      }
     }
 
     if (HAL_GetTick() - uart_show_tick >= 2000 && uart_rx_len > 0) {
@@ -177,19 +190,7 @@ int main(void)
 
       u8g2_SetFont(&u8g2, u8g2_font_6x10_tr);
       u8g2_DrawStr(&u8g2, scroll_x, 10, "HIT409LAB");
-      
-      u8g2_SetFont(&u8g2, u8g2_font_ncenB14_tr);
-      u8g2_DrawStr(&u8g2, 30, 60, "Counter:");
 
-      int temp = counter;
-      if (temp < 0) {
-        temp = -temp;
-        sprintf(str_buf, "-%d", temp);
-      } else {
-        sprintf(str_buf, "%d", counter);
-      }
-      u8g2_DrawStr(&u8g2, 30, 90, str_buf);
-      
       u8g2_SetFont(&u8g2, u8g2_font_4x6_tr);
       sprintf(str_buf, "%d", fps);
       u8g2_DrawStr(&u8g2, 0, 127, str_buf);
@@ -197,6 +198,23 @@ int main(void)
       if (uart_rx_len > 0) {
         u8g2_DrawStr(&u8g2, 0, 40, (char*)uart_rx_buf);
       }
+
+      u8g2_SetFont(&u8g2, u8g2_font_ncenB10_tr);
+      if (angle_selected) {
+        uint8_t cx = 6, cy = 55;
+        u8g2_DrawHLine(&u8g2, cx-3, cy, 7);
+        u8g2_DrawVLine(&u8g2, cx, cy-3, 7);
+        u8g2_DrawPixel(&u8g2, cx-2, cy-2);
+        u8g2_DrawPixel(&u8g2, cx+2, cy-2);
+        u8g2_DrawPixel(&u8g2, cx-2, cy+2);
+        u8g2_DrawPixel(&u8g2, cx+2, cy+2);
+      } else {
+        u8g2_DrawStr(&u8g2, 0, 60, ">");
+      }
+      u8g2_DrawStr(&u8g2, 15, 60, "Servo");
+      sprintf(str_buf, "%d", target_angle);
+      u8g2_DrawStr(&u8g2, 60, 60, str_buf);
+      u8g2_SetDrawColor(&u8g2, 1);
 
       u8g2_SendBuffer(&u8g2);
     }
@@ -206,12 +224,13 @@ int main(void)
       if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_1) == GPIO_PIN_RESET) {
         if (!button_pressed) {
           button_pressed = 1;
-          HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
-          counter = 0;
-          __HAL_TIM_SET_COUNTER(&htim4, 0);
-          last_count = 0;
-          uart_rx_len = 0;
-          memset(uart_rx_buf, 0, sizeof(uart_rx_buf));
+          if (!angle_selected) {
+            angle_selected = 1;
+          } else {
+            uint16_t pwm = 580 + (target_angle * 11);
+            __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, pwm);
+            angle_selected = 0;
+          }
         }
       }
     } else {
@@ -295,6 +314,65 @@ static void MX_SPI1_Init(void)
   /* USER CODE BEGIN SPI1_Init 2 */
 
   /* USER CODE END SPI1_Init 2 */
+
+}
+
+/**
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 72-1;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 20000-1;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim2, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+
+  /* USER CODE END TIM2_Init 2 */
+  HAL_TIM_MspPostInit(&htim2);
 
 }
 
@@ -393,6 +471,9 @@ static void MX_DMA_Init(void)
   /* DMA1_Channel3_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Channel3_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel3_IRQn);
+  /* DMA1_Channel5_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel5_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel5_IRQn);
 
 }
 
